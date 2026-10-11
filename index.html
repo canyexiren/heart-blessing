@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#FDF1F6" />
+<title>爱心便签 · 送给宝宝的祝福</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='88'%3E%F0%9F%92%97%3C/text%3E%3C/svg%3E" />
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0;height:100%;overflow:hidden}
+  body{
+    background:
+      radial-gradient(circle at 50% 36%, #FFFAFC 0%, #FDF0F6 38%, #F8E8F2 68%, #EFE7F7 100%);
+    font-family:"Microsoft YaHei","PingFang SC","Hiragino Sans GB","Noto Sans SC",sans-serif;
+    user-select:none;-webkit-user-select:none;
+  }
+  #stage{position:fixed;inset:0;overflow:hidden}
+
+  .note{
+    position:absolute;
+    display:flex;align-items:center;justify-content:center;
+    text-align:center;
+    line-height:1.25;
+    font-weight:700;
+    border:1.5px solid;
+    box-shadow:0 4px 14px rgba(186,116,150,.16);
+    opacity:0;
+    transform:translate(var(--dx,0),var(--dy,0)) scale(.35) rotate(var(--rot,0deg));
+    transition:opacity .36s ease, transform .46s cubic-bezier(.22,1.5,.42,1);
+    will-change:opacity,transform;
+    pointer-events:none;
+    overflow:hidden;
+  }
+  .note.in{opacity:1;transform:translate(0,0) scale(1) rotate(0deg)}
+  .note.leave{
+    transition:opacity .32s ease, transform .32s ease;
+    opacity:0;transform:translate(0,0) scale(.28) rotate(0deg);
+  }
+
+  .hint{
+    position:fixed;left:0;right:0;bottom:max(14px,env(safe-area-inset-bottom));
+    text-align:center;font-size:12px;letter-spacing:.1em;
+    color:#B57E9B;opacity:0;transition:opacity .9s ease;pointer-events:none;
+  }
+  .hint.show{opacity:.7}
+</style>
+</head>
+<body>
+<div id="stage" aria-hidden="true"></div>
+<div class="hint" id="hint">轻点屏幕重新播放</div>
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- 1. 祝福文案（与原脚本一致） ---------- */
+  var TEXTS = [
+    "早日评上正高",
+    "课题申报必中",
+    "论文秒发核心",
+    "公开课大获好评",
+    "优质课评比一等奖",
+    "带的班级断层第一",
+    "学生听话不操心",
+    "批改作业手不酸",
+    "教案一次就过",
+    "今天也没被学生气到",
+    "没有晚自习的烦恼",
+    "考点讲完全员秒懂",
+    "高考92率起飞",
+    "保护嗓子多喝水",
+    "拒绝内卷准时下班",
+    "寒暑假快快到来",
+    "放假绝不排值班",
+    "烦恼通通准时下课",
+    "周末睡到自然醒",
+    "全世界最美的宝宝",
+    "累了有我给你揉肩",
+    "今天下班去吃大餐",
+    "天天都有好心情",
+    "永远做你最强后盾"
+  ];
+
+  /* ---------- 2. 马卡龙配色表（底色, 边框/字体颜色） ---------- */
+  var PALETTES = [
+    ["#FFE3EC", "#C2185B"], ["#FFD6E0", "#D81B60"], ["#FFEAF1", "#AD1457"],
+    ["#DFF0CE", "#2E7D32"], ["#FDE8EC", "#C62828"], ["#FFE9E0", "#E65100"],
+    ["#FFF1E0", "#EF6C00"], ["#FFEDD9", "#D84315"], ["#E0F7FA", "#00838F"],
+    ["#EDE7F6", "#512DA8"], ["#F3E5F5", "#6A1B9A"], ["#E8F5E9", "#1B5E20"],
+    ["#FFF9C4", "#F57F17"], ["#FFF0F5", "#880E4F"], ["#E1F5FE", "#0277BD"]
+  ];
+
+  /* ---------- 3. 尺寸参数 ---------- */
+  var HEART_NOTES = 75;    // 心形便签数
+  var EXPLODE_TOTAL = 180; // 炸屏便签数
+  var SPEED = 0.06;        // 与 Python 版 run_animation(speed=0.06) 对应
+
+  var stage = document.getElementById("stage");
+  var hint = document.getElementById("hint");
+
+  var vw = 0, vh = 0, noteW = 0, noteH = 0, scale = 0, fontPx = 0, radius = 0, padX = 0;
+  var runId = 0;
+
+  function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function pick(arr) { return arr[(Math.random() * arr.length) | 0]; }
+
+  function metrics() {
+    vw = window.innerWidth;
+    vh = window.innerHeight;
+    noteW = clamp(Math.min(vw * 0.135, vh * 0.135), 86, 158);
+    noteH = noteW * 0.425;
+    // 心形尺寸取三者最小值，保证在窄屏/矮屏上都能完整显示（四周各留 8px）：
+    //   1) 原版比例 noteW / 8（对应原脚本 160 / 20）
+    //   2) 横向：心形宽度 = 32 * scale + noteW，不得超过视口宽度
+    //   3) 纵向：心形高度约 29 * scale + noteH，不得超过视口高度
+    scale = Math.min(
+      noteW / 8,
+      Math.max(4, (vw - noteW - 16) / 32),
+      Math.max(4, (vh - noteH - 16) / 29)
+    );
+    fontPx = clamp(noteW * 0.108, 10, 17);
+    radius = Math.round(noteW * 0.075);
+    padX = Math.round(noteW * 0.08);
+  }
+
+  function makeNote(x, y, text) {
+    var p = pick(PALETTES);
+    var el = document.createElement("div");
+    el.className = "note";
+    el.textContent = text || pick(TEXTS);
+    el.style.left = x.toFixed(1) + "px";
+    el.style.top = y.toFixed(1) + "px";
+    el.style.width = noteW.toFixed(1) + "px";
+    el.style.height = noteH.toFixed(1) + "px";
+    el.style.padding = "0 " + padX + "px";
+    el.style.background = p[0];
+    el.style.borderColor = p[1];
+    el.style.color = p[1];
+    el.style.fontSize = fontPx.toFixed(1) + "px";
+    el.style.borderRadius = radius + "px";
+    el.style.setProperty("--dx", (Math.random() * 10 - 5).toFixed(1) + "px");
+    el.style.setProperty("--dy", (Math.random() * 10 - 5).toFixed(1) + "px");
+    el.style.setProperty("--rot", (Math.random() * 10 - 5).toFixed(1) + "deg");
+    stage.appendChild(el);
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { el.classList.add("in"); });
+    });
+    return el;
+  }
+
+  function leaveNote(el, ms) {
+    el.classList.remove("in");
+    el.classList.add("leave");
+    setTimeout(function () {
+      if (el.parentNode) { el.parentNode.removeChild(el); }
+    }, ms);
+  }
+
+  /* 心形轨迹：与 Python 版参数方程完全一致 */
+  function heartPoints() {
+    var cx = vw / 2;
+    var cy = vh / 2 - Math.max(10, vh * 0.03);
+    var pts = [];
+    for (var i = 0; i < HEART_NOTES; i++) {
+      var t = Math.PI - (2 * Math.PI * i / HEART_NOTES);
+      var x = 16 * Math.pow(Math.sin(t), 3);
+      var y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+      pts.push([cx + scale * x - noteW / 2, cy + scale * y - noteH / 2]);
+    }
+    return pts;
+  }
+
+  function clearStage() {
+    stage.innerHTML = "";
+  }
+
+  /* ---------- 4. 主流程：心形 → 消散 → 炸屏 → 循环 ---------- */
+  async function run() {
+    var my = ++runId;
+    var alive = function () { return my === runId; };
+
+    while (alive()) {
+      metrics();
+      clearStage();
+
+      var pts = heartPoints();
+      var notes = [];
+
+      /* 阶段一：沿心形轨迹逐张浮现 */
+      for (var i = 0; i < pts.length; i++) {
+        if (!alive()) { return; }
+        notes.push(makeNote(pts[i][0], pts[i][1]));
+        await sleep(Math.max(5, SPEED * 1000));
+      }
+      if (!alive()) { return; }
+      await sleep(Math.max(500, SPEED * 20000));
+
+      /* 阶段二：由后向前逐张消散 */
+      for (var j = notes.length - 1; j >= 0; j--) {
+        if (!alive()) { return; }
+        leaveNote(notes[j], 340);
+        await sleep(Math.max(5, SPEED * 700));
+      }
+      if (!alive()) { return; }
+      await sleep(Math.max(200, SPEED * 6000));
+
+      /* 阶段三：便签炸满全屏 */
+      for (var n = 0; n < EXPLODE_TOTAL; n++) {
+        if (!alive()) { return; }
+        var rx = 8 + Math.random() * Math.max(8, vw - noteW - 16);
+        var ry = 8 + Math.random() * Math.max(8, vh - noteH - 16);
+        makeNote(rx, ry);
+        await sleep(Math.max(5, SPEED * 400));
+      }
+      if (!alive()) { return; }
+
+      hint.classList.add("show");
+      await sleep(4200);
+      if (!alive()) { return; }
+
+      /* 收尾：整屏淡出后自动重播 */
+      var all = Array.prototype.slice.call(stage.children);
+      for (var q = 0; q < all.length; q++) {
+        (function (el) {
+          setTimeout(function () {
+            if (el.parentNode) { leaveNote(el, 380); }
+          }, Math.random() * 420);
+        })(all[q]);
+      }
+      await sleep(1100);
+      hint.classList.remove("show");
+      await sleep(500);
+    }
+  }
+
+  function restart() {
+    runId++;
+    clearStage();
+    hint.classList.remove("show");
+    run();
+  }
+
+  /* ---------- 5. 交互与自适应 ---------- */
+  var lastTap = 0;
+  document.addEventListener("pointerdown", function () {
+    var now = Date.now();
+    if (now - lastTap < 900) { return; }
+    lastTap = now;
+    restart();
+  }, { passive: true });
+
+  var resizeTimer = null;
+  window.addEventListener("resize", function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(restart, 320);
+  });
+
+  window.addEventListener("load", function () {
+    setTimeout(run, 200);
+  });
+})();
+</script>
+</body>
+</html>
